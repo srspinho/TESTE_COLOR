@@ -1,0 +1,37 @@
+Dicar de caracteres
+
+Na imagem watermarked_img_10509807660405500499.png (quadro inferior direito), as fontes seguem uma estética técnica e futurista, muito comum em interfaces de monitoramento de sistemas.
+
+Embora sejam representações gráficas geradas por IA, elas correspondem a famílias de fontes reais que você pode utilizar no seu projeto com a biblioteca TFT_eSPI:
+
+1. Título ("SYSTEM MONITOR v2.4")
+A fonte utilizada é a Orbitron.
+
+Estilo: Geométrica e sem serifa, com um aspecto "scifi".
+
+Por que funciona: Ela transmite uma identidade visual de tecnologia moderna e avançada.
+
+2. Contador Central ("0")
+O caractere grande no centro utiliza uma fonte no estilo Square ou Techno.
+
+Estilo: Formatos quadrados com cantos levemente arredondados ou chanfrados.
+
+Dica Técnica: No mundo das fontes customizadas para Arduino, essa variação é muitas vezes encontrada como "Michroma" ou versões customizadas da "Eurostile".
+
+3. Rótulos e Dados Pequenos ("KEYS PREPRESSED", "VOL", "DATA")
+Para os textos menores e informações técnicas, a imagem utiliza fontes Sans-Serif de Largura Fixa (Monospaced) ou Pixel Fonts.
+
+Estilo: Altamente legível em tamanhos reduzidos, essencial para telas de baixa resolução como a sua de 160x80.
+
+Exemplos Reais: Roboto Mono, Share Tech Mono ou a clássica FreeSans (que já vem em muitos pacotes da Adafruit GFX).
+
+Como aplicar isso no seu código?
+Como você já está familiarizado com o processo de conversão, procure por esses nomes nos formatos .ttf antes de passar pelo conversor:
+
+Para o impacto visual: Orbitron-Bold.ttf ou Orbitron-Medium.ttf.
+
+Para os dados: ShareTechMono-Regular.ttf (ela tem um visual de "terminal" muito limpo).
+
+Para o contador: Digital-7 (se quiser o visual de calculadora) ou Michroma.ttf (para o visual quadrado da imagem).
+
+Lembre-se apenas de ajustar o nome da variável no arquivo .h se ela começar com números, para evitar aquele erro de compilação que vimos anteriormente!
