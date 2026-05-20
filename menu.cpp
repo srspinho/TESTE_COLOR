@@ -1,5 +1,6 @@
 #include "menu.h"
 #include <EEPROM.h>
+#include <hardware/watchdog.h> // <--- ADICIONE ESTA LINHA NO TOPO
 
 // Herda o canvas criado no programa principal para não duplicar memória
 extern TFT_eSprite canvas; 
@@ -74,6 +75,63 @@ void tratar_botoes() {
 }
 
 void processar_acao(char botao) {
+  // --- MODO EDIÇÃO DE VALOR (Modificando Brilho, Velocidade, etc.) ---
+  if (is_editing_value) {
+    switch (botao) {
+      case 'B':
+      case 'S':
+        is_editing_value = false;
+        salvar_configuracoes();
+        break;
+        
+      case 'U':
+        ajustar_valor_variavel(1);
+        break;
+        
+      case 'D':
+        ajustar_valor_variavel(-1);
+        break;
+    }
+    desenhar_menu();
+    canvas.pushSprite(0, 0);
+    return;
+  } // <-- ESSA CHAVE FECHA O IF (is_editing_value). O ERRO ESTAVA DAQUI PARA BAIXO
+
+  // --- MODO NAVEGAÇÃO NORMAL (Andando pelos itens do Menu) ---
+  int limite_itens = 0;
+  switch (current_menu_level) {
+    case LEVEL_MAIN:        limite_itens = MAIN_MENU_COUNT; break;
+    case LEVEL_SUB_SS:      limite_itens = SS_MENU_COUNT; break;
+    case LEVEL_SUB_CONFIG:  limite_itens = CONFIG_MENU_COUNT; break;
+    case LEVEL_SUB_PROD:    limite_itens = PROD_MENU_COUNT; break;
+    case LEVEL_SUB_SISTEMA: limite_itens = SISTEMA_MENU_COUNT; break;
+  }
+
+  // Executa os comandos de navegação respeitando o limite do menu atual
+  if (botao == 'U') { 
+    current_item_index = (current_item_index <= 0) ? limite_itens - 1 : current_item_index - 1; 
+  }
+  else if (botao == 'D') { 
+    current_item_index = (current_item_index >= limite_itens - 1) ? 0 : current_item_index + 1; 
+  }
+  else if (botao == 'B') { 
+    if (current_menu_level != LEVEL_MAIN) { 
+      current_menu_level = LEVEL_MAIN; 
+      current_item_index = 0; 
+    } 
+    // Se for LEVEL_MAIN, não faz nada! Travado para não sair acidentalmente do menu.
+  }
+  else if (botao == 'S') { 
+    executar_selecao(); 
+  }
+
+  // Atualiza o display após a ação de navegação
+  desenhar_menu();
+  canvas.pushSprite(0, 0);
+}
+
+/*
+void processar_acao(char botao) {
   if (is_editing_value) {
     if (botao == 'B' || botao == 'S') { is_editing_value = false; salvar_configuracoes(); } 
     else if (botao == 'U') ajustar_valor_variavel(1); 
@@ -98,6 +156,7 @@ void processar_acao(char botao) {
 
   desenhar_menu();
 }
+*/
 
 void executar_selecao() {
   switch (current_menu_level) {
@@ -114,7 +173,10 @@ void executar_selecao() {
       if (current_item_index == 0) { config.envio_ctrl_shift = !config.envio_ctrl_shift; salvar_configuracoes(); } 
       else is_editing_value = true;
       break;
-    case LEVEL_SUB_SISTEMA: if (current_item_index == 0) is_editing_value = true; else if (current_item_index == 1) executar_reset_placa(); break;
+    case LEVEL_SUB_SISTEMA:
+      if (current_item_index == 0) is_editing_value = true;
+      else if (current_item_index == 1) executar_reset_placa(); // Chama o reboot
+      break;
   }
 }
 
@@ -132,7 +194,12 @@ void ajustar_valor_variavel(int direcao) {
 }
 
 void desenhar_menu() {
-  canvas.fillSprite(TFT_BLACK);
+  
+  // --- REDIMENSIONAMENTO SEGURO DA MEMÓRIA RAM ---
+  canvas.deleteSprite();        // Apaga o sprite pequeno do minigráfico
+  canvas.createSprite(160, 80); // Aloca o tamanho total da tela para o Menu
+  canvas.fillSprite(TFT_BLACK);  // Limpa o fundo
+
   const char* titulo = "MENU";
   int total_itens = 0;
   const char** itens_ponteiro = NULL;
@@ -206,6 +273,9 @@ void executar_reset_placa() {
   canvas.setTextColor(TFT_RED);
   canvas.drawString("REINICIANDO...", 35, 35);
   canvas.pushSprite(0, 0);
-  delay(500);
-   scb_hw->aircr = 0x05FA0004;
+  delay(1000); // Dá tempo para o usuário ler a mensagem na tela
+
+  // Executa o reboot nativo de hardware do RP2040/RP2350
+  // Parâmetros: (tempo de delay antes do boot em ms, imagem de boot, fonte)
+  watchdog_reboot(0, 0, 0); 
 }

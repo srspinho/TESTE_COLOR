@@ -30,6 +30,8 @@ struct Config {
 // Tornando a variável config visível em outros arquivos
 extern Config config;
 extern bool is_editing_value;
+extern MenuLevel current_menu_level; // <-- ADICIONE ESTA LINHA
+extern int current_item_index;       // <-- ADICIONE ESTA LINHA
 
 // --- PROTÓTIPOS DAS FUNÇÕES ---
 void setup_menu();

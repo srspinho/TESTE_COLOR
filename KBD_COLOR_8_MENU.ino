@@ -10,7 +10,11 @@
 #include "RobotoMono12pt7b.h"
 #include "Orbitron_Bold6pt7b.h"
 #include "atari.h"
-#include "menu.h" // Integração com a persistência e UI do menu
+#include "menu.h"  // Integração com a persistência e UI do menu
+
+// --- VARIÁVEIS EXTERNAS DO MENU ---
+extern MenuLevel current_menu_level;
+extern int current_item_index;
 
 /* --- PROTÓTIPOS --- */
 void set_report_callback(uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize);
@@ -65,12 +69,12 @@ int color_offset = 0;
 
 // Offset global para o gradiente do logo Atari
 int rainbow_offset = 0;
-const int logoWidth = 74;  
+const int logoWidth = 74;
 const int logoHeight = 80;
 
 /* --- HARDWARE --- */
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite canvas = TFT_eSprite(&tft);  
+TFT_eSprite canvas = TFT_eSprite(&tft);
 
 /* --- VARIÁVEIS GLOBAIS --- */
 volatile uint32_t g_key_count = 0;
@@ -88,9 +92,9 @@ bool is_dimmed = false;
 bool is_screensaver = false;
 int current_ss_type = 0;
 const uint32_t DIM_TIMEOUT = 30000;
-const uint32_t LIFE_TIMEOUT = 120000; // Será sobrescrito pela config do menu no loop
+const uint32_t LIFE_TIMEOUT = 120000;  // Será sobrescrito pela config do menu no loop
 
-bool g_em_modo_menu = false; // Controla se o visor exibe o menu ou o monitor
+bool g_em_modo_menu = false;  // Controla se o visor exibe o menu ou o monitor
 
 // Variáveis Pac-Man
 int pac_posX = -60;
@@ -122,10 +126,10 @@ struct Asteroid {
   int vx, vy;
   int size;
   int points;
-  int angle[10]; 
-  int radius[10]; 
+  int angle[10];
+  int radius[10];
 };
-#define MAX_ASTEROIDS 20 // Limite seguro para o array fixo
+#define MAX_ASTEROIDS 20  // Limite seguro para o array fixo
 Asteroid asteroids[MAX_ASTEROIDS];
 
 // Gráfico Vars
@@ -145,7 +149,7 @@ uint8_t drop_speed[MATRIX_COLS];
 uint32_t matrix_start_time = 0;
 char matrix_last[MATRIX_COLS][8];
 
-volatile uint8_t g_leds = 0;  
+volatile uint8_t g_leds = 0;
 
 // USB Vars
 volatile uint8_t dev_addr_keyboard = 0;
@@ -180,7 +184,7 @@ void setup() {
   usb_hid.begin();
 
   // Sincronização de Volume Nativa
-  delay(3000);  
+  delay(3000);
   if (usb_hid.ready()) {
     for (int i = 0; i < 50; i++) {
       uint8_t vol_down[2] = { 0xEA, 0x00 };
@@ -206,59 +210,71 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
   randomSeed(analogRead(26) + micros());
 
-  // Inicializa a engine do menu.cpp (EEPROM + pinos dos botões)
   setup_menu();
 
-  // Aplica backlight inicial se definido por hardware
-  #ifdef TFT_BL
-    pinMode(TFT_BL, OUTPUT);
-    analogWrite(TFT_BL, map(config.sistema_brilho, 0, 100, 0, 255));
-  #endif
+#ifdef TFT_BL
+  analogWrite(TFT_BL, map(config.sistema_brilho, 0, 100, 0, 255));
+#endif
 
   g_volume = 70;
-  last_activity_time = millis();
+
+  // Se a configuração de início de screensaver estiver definida como imediata (0 minutos)
+  // ou se você quer que ele aplique o screensaver gravado logo no boot:
+  if (config.prod_inicio == 0) {
+    last_activity_time = millis() - (60ULL * 1000ULL);  // Força estouro imediato para chamar o SS configurado
+  } else {
+    last_activity_time = millis();
+  }
+
+  g_em_modo_menu = false;  // Começa executando o sistema limpo
   firstDrawAfterSS = true;
   g_display_dirty = true;
 }
 
+
 void loop() {
   uint32_t now = millis();
 
-  // Processa cliques e debounce físico dos botões do menu
-  tratar_botoes();
-
-  // Ajusta o hardware de brilho em tempo real com base no menu
-  #ifdef TFT_BL
-    analogWrite(TFT_BL, map(config.sistema_brilho, 0, 100, 0, 255));
-  #endif
-
+  // --- SE O MENU ESTIVER ATIVO, TRATA OS BOTÕES E BLOQUEIA O RESTO DO MONITOR ---
   if (g_em_modo_menu) {
-    extern MenuLevel current_menu_level;
-    // Se pressionar BACK na raiz do Menu, volta para a tela normal do contador
-    if (current_menu_level == LEVEL_MAIN && digitalRead(BOTAO_BACK) == LOW) {
-      g_em_modo_menu = false;
-      firstDrawAfterSS = true;
-      g_display_dirty = true;
-      last_activity_time = millis();
-      delay(200);
-    }
-    return; // Interrompe o processamento do monitor para focar na renderização do menu
+    tratar_botoes();  // Chama a função do menu.cpp para escutar os cliques de navegação!
+    return;           // Impede que o monitor de teclas ou screensavers rodem por trás e borrem a tela
   }
 
-  // Se clicar em SELECT fora do menu, abre a interface de configurações
-  if (digitalRead(BOTAO_SELECT) == LOW && !is_editing_value) {
+  // 1. VERIFICAÇÃO INTEGRADA: Se o menu está desligado e alguém clica, ativa o modo Menu
+  if (digitalRead(BOTAO_UP) == LOW || digitalRead(BOTAO_DOWN) == LOW || digitalRead(BOTAO_SELECT) == LOW || digitalRead(BOTAO_BACK) == LOW) {
+
+    // Seta os estados iniciais do Menu
     g_em_modo_menu = true;
+    current_menu_level = LEVEL_MAIN;
+    current_item_index = 0;
+
+    // Sincroniza o tempo de debounce para o menu não ler o clique atual
+    extern unsigned long last_debounce_time;
+    last_debounce_time = millis();
+
+    // Força a orientação física correta da tela
+    tft.setRotation(1);
+    tft.fillScreen(TFT_BLACK);
+
+    // Redimensiona, desenha e joga na tela física
     desenhar_menu();
-    delay(200);
+    canvas.pushSprite(0, 0);
+
+    // ESPERA ATÉ O USUÁRIO SOLTAR COMPLETAMENTE O BOTÃO PARA NÃO PULAR ITEM
+    while (digitalRead(BOTAO_UP) == LOW || digitalRead(BOTAO_DOWN) == LOW || digitalRead(BOTAO_SELECT) == LOW || digitalRead(BOTAO_BACK) == LOW) {
+      delay(10);
+    }
+
+    delay(150);  // Margem de segurança elétrica
     return;
   }
 
-  // 1. MONITOR DE ATIVIDADE DE TECLAS
+  // 2. MONITOR DE ATIVIDADE DE TECLAS (Vindas do Teclado USB Host)
   static uint32_t last_key_val = 0;
   if (g_key_count != last_key_val) {
     last_key_val = g_key_count;
     last_activity_time = now;
-
     if (is_screensaver || is_dimmed) {
       is_screensaver = false;
       is_dimmed = false;
@@ -266,12 +282,11 @@ void loop() {
       g_display_dirty = true;
       tft.fillScreen(TFT_BLACK);
     }
-
     contadorDeTeclas++;
-    g_display_dirty = true;  
+    g_display_dirty = true;
   }
 
-  // 2. ATUALIZAÇÃO DO GRÁFICO (A cada 1 segundo)
+  // 3. ATUALIZAÇÃO DO GRÁFICO (A cada 1 segundo)
   if (now - lastGraphUpdate >= 1000) {
     lastGraphUpdate = now;
     for (int i = 0; i < GRAPH_WIDTH - 1; i++) history[i] = history[i + 1];
@@ -282,25 +297,24 @@ void loop() {
   }
 
   uint32_t idle_time = now - last_activity_time;
-  
-  // Resgata o tempo de início do screensaver configurado no menu (minutos para ms)
   unsigned long menu_life_timeout = (unsigned long)config.prod_inicio * 60 * 1000;
 
-  // 3. LÓGICA DO SCREENSAVER
+  // 4. LÓGICA DO SCREENSAVER DIRETO NO INÍCIO OU POR IDLE
+  // Se o usuário configurou para iniciar direto ou se atingiu o tempo de inatividade
   if (idle_time > menu_life_timeout) {
     if (!is_screensaver) {
       is_screensaver = true;
       tft.fillScreen(TFT_BLACK);
-      
-      // Define qual screensaver vai abrir inicialmente com base no menu
+
+      // Mapeia o screensaver de acordo com o configurado na EEPROM
       if (config.ss_selecionado == SS_TODOS) {
-        current_ss_type = 4; // Começa pelo Pong padrão
+        current_ss_type = 0;  // Começa do primeiro (Atari) e vai rotacionando
       } else {
         current_ss_type = config.ss_selecionado;
       }
 
       switch (current_ss_type) {
-        case 0: init_atari(); break; // Força mapeamento correto do enum para o loop
+        case 0: init_atari(); break;
         case 1: init_pong(); break;
         case 2: init_asteroids(); break;
         case 3: init_starfield(); break;
@@ -311,7 +325,7 @@ void loop() {
       last_ss_switch = now;
     }
 
-    // Se estiver configurado para rotacionar ("Todos"), aplica o switch sequencial
+    // Se em modo de rotação ("Todos"), rotaciona a cada ciclo configurado
     if (config.ss_selecionado == SS_TODOS && (now - last_ss_switch > SS_SWITCH_INTERVAL)) {
       current_ss_type = (current_ss_type + 1) % 7;
       tft.fillScreen(TFT_BLACK);
@@ -328,10 +342,10 @@ void loop() {
       last_ss_switch = now;
     }
 
-    // Taxa de atualização (frame rate) dinâmica via parâmetro "Veloc. Gradiente" do menu
+    // Controle de frame-rate (velocidade)
     uint32_t speed = map(config.vel_gradiente, 1, 20, 150, 10);
-    if (current_ss_type == 4) speed += 50; // Ajuste proporcional extra para o Game of Life
-    if (current_ss_type == 5) speed += 80; // Ajuste proporcional extra para a Matrix
+    if (current_ss_type == 4) speed += 50;
+    if (current_ss_type == 5) speed += 80;
 
     if (now - last_gen_time > speed) {
       switch (current_ss_type) {
@@ -348,7 +362,7 @@ void loop() {
     }
 
   } else {
-    // 4. MODO MONITOR NORMAL
+    // Modo monitor normal (Contador de teclas)
     if (idle_time > DIM_TIMEOUT) {
       is_dimmed = true;
     } else {
@@ -356,7 +370,6 @@ void loop() {
     }
   }
 
-  // 5. PROCESSAMENTO DE ATUALIZAÇÃO DA TELA (Sinalizações via FIFO)
   while (rp2040.fifo.available()) {
     if (rp2040.fifo.pop() == FIFO_DISPLAY_UPDATE) {
       g_display_dirty = true;
@@ -405,7 +418,8 @@ void update_display() {
   char buf[12];
   sprintf(buf, "%lu", g_key_count);
   int16_t xPos = (160 - tft.textWidth(buf)) / 2;
-  uint16_t color = (g_key_count < 1000) ? TFT_GREEN : (g_key_count < 5000) ? TFT_YELLOW : TFT_RED;
+  uint16_t color = (g_key_count < 1000) ? TFT_GREEN : (g_key_count < 5000) ? TFT_YELLOW
+                                                                           : TFT_RED;
 
   if (strcmp(buf, last_buf) != 0) {
     tft.fillRect(0, 22, 160, 20, TFT_BLACK);
@@ -439,7 +453,8 @@ void update_display() {
   }
 
   // --- Indicador Caps Lock & Indicador de Produtividade Ativa ---
-  if (g_leds & 0x02) {  
+  /*
+  if (g_leds & 0x02) {
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.drawString("CAPS ON", 120, 10);
   } else if (config.envio_ctrl_shift) {
@@ -448,8 +463,9 @@ void update_display() {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.drawString("P.ON", 135, 2);
   } else {
-    tft.fillRect(120, 2, 40, 12, TFT_BLACK);  
+    tft.fillRect(120, 2, 40, 12, TFT_BLACK);
   }
+  */
 }
 
 /* ==================== SCREENSAVER: ASTEROIDS ==================== */
@@ -457,13 +473,16 @@ void init_asteroids() {
   tft.fillScreen(TFT_BLACK);
   // Usa dinamicamente o parâmetro "Qtd Asteroides" do menu com limite de segurança do array
   int total_asteroides = constrain(config.qtd_asteroides, 1, MAX_ASTEROIDS);
-  
+
   for (int i = 0; i < total_asteroides; i++) {
-    asteroids[i].x = random(20, tft.width()-20);
-    asteroids[i].y = random(20, tft.height()-20);
+    asteroids[i].x = random(20, tft.width() - 20);
+    asteroids[i].y = random(20, tft.height() - 20);
     asteroids[i].vx = random(-3, 4);
     asteroids[i].vy = random(-3, 4);
-    if (asteroids[i].vx == 0 && asteroids[i].vy == 0) { asteroids[i].vx = 1; asteroids[i].vy = 1; }
+    if (asteroids[i].vx == 0 && asteroids[i].vy == 0) {
+      asteroids[i].vx = 1;
+      asteroids[i].vy = 1;
+    }
     asteroids[i].size = random(10, 20);
     asteroids[i].points = random(6, 10);
     for (int p = 0; p < asteroids[i].points; p++) {
@@ -495,8 +514,8 @@ void draw_asteroids() {
     for (int p = 0; p < asteroids[i].points; p++) {
       int x1 = asteroids[i].x + cos(radians(asteroids[i].angle[p])) * asteroids[i].radius[p];
       int y1 = asteroids[i].y + sin(radians(asteroids[i].angle[p])) * asteroids[i].radius[p];
-      int x2 = asteroids[i].x + cos(radians(asteroids[i].angle[(p+1)%asteroids[i].points])) * asteroids[i].radius[(p+1)%asteroids[i].points];
-      int y2 = asteroids[i].y + sin(radians(asteroids[i].angle[(p+1)%asteroids[i].points])) * asteroids[i].radius[(p+1)%asteroids[i].points];
+      int x2 = asteroids[i].x + cos(radians(asteroids[i].angle[(p + 1) % asteroids[i].points])) * asteroids[i].radius[(p + 1) % asteroids[i].points];
+      int y2 = asteroids[i].y + sin(radians(asteroids[i].angle[(p + 1) % asteroids[i].points])) * asteroids[i].radius[(p + 1) % asteroids[i].points];
       tft.drawLine(x1, y1, x2, y2, color);
     }
   }
@@ -519,7 +538,7 @@ uint16_t neonPulseColor(int pos, float intensity, int phase) {
   float pulse = (sin(0.02 * color_offset + phase) + 1.0) / 2.0;
   // Integração real: Converte a intensidade do Menu (0-100) para multiplicador float (0.0 a 1.0)
   float menu_mult = (float)config.intensidade_cores / 100.0;
-  
+
   byte r = (sin(0.05 * (pos + color_offset) + 0) * 127 + 128) * pulse * intensity * menu_mult;
   byte g = (sin(0.05 * (pos + color_offset) + 2) * 127 + 128) * pulse * intensity * menu_mult;
   byte b = (sin(0.05 * (pos + color_offset) + 4) * 127 + 128) * pulse * intensity * menu_mult;
@@ -527,7 +546,7 @@ uint16_t neonPulseColor(int pos, float intensity, int phase) {
 }
 
 void update_atari() {
-  color_offset += 2;  
+  color_offset += 2;
   if (color_offset > 2000) color_offset = 0;
 }
 
@@ -545,9 +564,9 @@ void draw_atari_logo() {
     }
   }
 
-  tft.setFreeFont(&Orbitron_Bold6pt7b);
-  tft.setTextColor(rainbowColor(color_offset + 60), TFT_BLACK);
-  tft.drawString("ATARI", x0 + 13, y0 + logoHeight - 12);
+  //tft.setFreeFont(&Orbitron_Bold6pt7b);
+  //tft.setTextColor(rainbowColor(color_offset + 60), TFT_BLACK);
+  //yhtft.drawString("ATARI", x0 + 13, y0 + logoHeight - 12);
 }
 
 /* ==================== SCREENSAVER: PONG ==================== */
@@ -576,7 +595,7 @@ void update_pong() {
   if (ballY <= 0 || ballY >= 78) ballDY *= -1;
 
   if (ballX <= (paddleW + 2) && ballY >= paddle1Y && ballY <= paddle1Y + paddleH) {
-    ballDX *= -1.1;  
+    ballDX *= -1.1;
     ballX = paddleW + 3;
   }
 
@@ -743,8 +762,8 @@ void init_starfield() {
 
     int choice = random(0, 3);
     if (choice == 0) stars[i].color = TFT_WHITE;
-    else if (choice == 1) stars[i].color = tft.color565(255, 255, 128); 
-    else stars[i].color = tft.color565(128, 200, 255); 
+    else if (choice == 1) stars[i].color = tft.color565(255, 255, 128);
+    else stars[i].color = tft.color565(128, 200, 255);
   }
 }
 
@@ -796,7 +815,7 @@ void remap_key(hid_keyboard_report_t const *original, hid_keyboard_report_t *rem
     uint8_t key = original->keycode[i];
     if (altGr && key == HID_KEY_R) {
       remapped->modifier &= ~KEYBOARD_MODIFIER_RIGHTALT;
-      remapped->keycode[i] = 0x64; // Remapeia para barra invertida '\'
+      remapped->keycode[i] = 0x64;  // Remapeia para barra invertida '\'
     } else if (altGr && key == HID_KEY_M) {
       remapped->modifier &= ~KEYBOARD_MODIFIER_RIGHTALT;
       remapped->modifier |= (KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_LEFTSHIFT);
@@ -833,9 +852,9 @@ extern "C" {
       hid_keyboard_report_t remapped;
       remap_key(kbd_report, &remapped);
       if (usb_hid.ready()) usb_hid.sendReport(1, &remapped, sizeof(hid_keyboard_report_t));
-    } 
-    else if (len == 3 && report[0] == 0x03) {
-      int delta = (report[1] == 0xE9) ? 2 : (report[1] == 0xEA) ? -2 : 0;
+    } else if (len == 3 && report[0] == 0x03) {
+      int delta = (report[1] == 0xE9) ? 2 : (report[1] == 0xEA) ? -2
+                                                                : 0;
       if (delta != 0) {
         g_volume = constrain(g_volume + delta, 0, 100);
         rp2040.fifo.push_nb(FIFO_DISPLAY_UPDATE);
